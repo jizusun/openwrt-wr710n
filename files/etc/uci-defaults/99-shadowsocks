@@ -1,9 +1,5 @@
 #!/bin/sh
-# First boot: configure LAN IP, enable shadowsocks, setup cron
-
-# LAN IP: avoid conflict with main router (192.168.1.x)
-uci set network.lan.ipaddr='192.168.2.1'
-uci commit network
+# First boot: enable shadowsocks, setup cron
 
 chmod +x /etc/init.d/shadowsocks
 /etc/init.d/shadowsocks enable
@@ -12,8 +8,8 @@ chmod +x /etc/init.d/shadowsocks
 chmod +x /etc/shadowsocks-libev/watchdog.sh
 echo "*/5 * * * * /etc/shadowsocks-libev/watchdog.sh" >> /etc/crontabs/root
 
-# Cron: reboot daily at 4:30 AM
-echo "30 4 * * * reboot" >> /etc/crontabs/root
+# Cron: reboot daily at 4:30 AM Beijing time (UTC 20:30)
+echo "30 20 * * * reboot" >> /etc/crontabs/root
 
 /etc/init.d/cron enable
 /etc/init.d/cron start
