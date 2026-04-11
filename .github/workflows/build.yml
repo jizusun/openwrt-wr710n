@@ -31,6 +31,7 @@ jobs:
         run: |
           wget -q ${{ env.IMAGEBUILDER_URL }}
           tar xf openwrt-imagebuilder-*.tar.xz
+          mv openwrt-imagebuilder-*-ath79-generic.Linux-x86_64 imagebuilder
 
       - name: Download chnroute
         run: |
@@ -40,7 +41,7 @@ jobs:
 
       - name: Build firmware
         run: |
-          cd openwrt-imagebuilder-*
+          cd imagebuilder
           make image PROFILE="${{ env.PROFILE }}" \
             PACKAGES="${{ matrix.packages }}" \
             FILES="../files"
@@ -49,4 +50,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: openwrt-wr710n-v1-${{ matrix.name }}
-          path: openwrt-imagebuilder-*/bin/targets/ath79/generic/*sysupgrade*
+          path: imagebuilder/bin/targets/ath79/generic/*sysupgrade*
