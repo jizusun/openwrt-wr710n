@@ -11,8 +11,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: full
-            desc: "LuCI + shadowsocks + IPv6"
+          - name: full-luci
+            desc: "完整 LuCI + shadowsocks + IPv6"
+            packages: >-
+              shadowsocks-libev-ss-redir shadowsocks-libev-ss-tunnel
+              iptables-mod-tproxy ip-full ipset
+              -ppp -ppp-mod-pppoe -kmod-pppoe -kmod-pppox
+          - name: mini-luci
+            desc: "最小 LuCI + shadowsocks + IPv6"
             packages: >-
               shadowsocks-libev-ss-redir shadowsocks-libev-ss-tunnel
               iptables-mod-tproxy ip-full ipset
@@ -26,14 +32,6 @@ jobs:
               iptables-mod-tproxy ip-full ipset
               -luci -luci-base -luci-lib-ip -luci-lib-jsonc -luci-lib-nixio -uhttpd
               -ppp -ppp-mod-pppoe -kmod-pppoe -kmod-pppox
-          - name: minimal
-            desc: "shadowsocks only, no LuCI/IPv6"
-            packages: >-
-              shadowsocks-libev-ss-redir shadowsocks-libev-ss-tunnel
-              iptables-mod-tproxy ip-full ipset
-              -luci -luci-base -luci-lib-ip -luci-lib-jsonc -luci-lib-nixio -uhttpd
-              -ppp -ppp-mod-pppoe -kmod-pppoe -kmod-pppox
-              -odhcp6c -odhcpd-ipv6only -kmod-ipv6 -ip6tables
 
     name: "${{ matrix.name }} - ${{ matrix.desc }}"
     steps:
