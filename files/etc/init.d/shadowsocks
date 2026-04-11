@@ -6,6 +6,7 @@ STOP=10
 SS_CONF="/etc/shadowsocks-libev/config.json"
 SS_REDIR_PID="/var/run/ss-redir.pid"
 SS_TUNNEL_PID="/var/run/ss-tunnel.pid"
+CHNROUTE="/etc/shadowsocks-libev/chnroute.txt"
 
 start() {
     if grep -q "YOUR_SERVER" "$SS_CONF"; then
@@ -35,7 +36,16 @@ setup_iptables() {
     local server_ip
     server_ip=$(get_server_ip)
 
+    # Load China IP ranges into ipset
+    ipset create chnroute hash:net -exist
+    if [ -f "$CHNROUTE" ]; then
+        while read -r cidr; do
+            ipset add chnroute "$cidr" 2>/dev/null
+        done < "$CHNROUTE"
+    fi
+
     iptables -t nat -N SS_REDIR 2>/dev/null || return
+    # Skip private/reserved addresses
     iptables -t nat -A SS_REDIR -d 0.0.0.0/8 -j RETURN
     iptables -t nat -A SS_REDIR -d 10.0.0.0/8 -j RETURN
     iptables -t nat -A SS_REDIR -d 127.0.0.0/8 -j RETURN
@@ -44,8 +54,13 @@ setup_iptables() {
     iptables -t nat -A SS_REDIR -d 192.168.0.0/16 -j RETURN
     iptables -t nat -A SS_REDIR -d 224.0.0.0/4 -j RETURN
     iptables -t nat -A SS_REDIR -d 240.0.0.0/4 -j RETURN
+    # Skip SS server
     [ -n "$server_ip" ] && iptables -t nat -A SS_REDIR -d "$server_ip" -j RETURN
+    # Skip China IPs (direct connection)
+    iptables -t nat -A SS_REDIR -m set --match-set chnroute dst -j RETURN
+    # Everything else goes through proxy
     iptables -t nat -A SS_REDIR -p tcp -j REDIRECT --to-ports 1080
+
     iptables -t nat -A PREROUTING -p tcp -j SS_REDIR
 }
 
@@ -53,4 +68,5 @@ cleanup_iptables() {
     iptables -t nat -D PREROUTING -p tcp -j SS_REDIR 2>/dev/null
     iptables -t nat -F SS_REDIR 2>/dev/null
     iptables -t nat -X SS_REDIR 2>/dev/null
+    ipset destroy chnroute 2>/dev/null
 }
