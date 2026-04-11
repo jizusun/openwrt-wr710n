@@ -1,15 +1,3 @@
 #!/bin/sh
-# First boot: enable shadowsocks, setup cron
-
+# First boot: enable shadowsocks (but don't start), no cron reboot
 chmod +x /etc/init.d/shadowsocks
-/etc/init.d/shadowsocks enable
-
-# Cron: ss-redir watchdog every 5 minutes
-chmod +x /etc/shadowsocks-libev/watchdog.sh
-echo "*/5 * * * * /etc/shadowsocks-libev/watchdog.sh" >> /etc/crontabs/root
-
-# Cron: reboot daily at 4:30 AM Beijing time (UTC 20:30)
-echo "30 20 * * * reboot" >> /etc/crontabs/root
-
-/etc/init.d/cron enable
-/etc/init.d/cron start
