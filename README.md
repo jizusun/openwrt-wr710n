@@ -24,7 +24,7 @@
 - `iptables-mod-tproxy` / `ip-full` / `ipset` — iptables 透明转发所需
 
 **去掉的包（省空间）：**
-- LuCI（网页管理界面，全部通过 SSH 配置）
+- LuCI 扩展模块（luci-app-firewall, luci-app-opkg, luci-proto-ppp 等）
 - PPP / PPPoE（WAN 口使用 DHCP，不需要拨号）
 
 **保留的基础功能：**
@@ -34,6 +34,8 @@
 - 防火墙 (firewall4, nftables)
 - USB 支持 (kmod-usb-chipidea2)
 - 包管理 (opkg)
+- LuCI 最小化 Web 界面（luci-base, luci-mod-admin-full, luci-theme-bootstrap）
+- IPv6
 
 ## 构建方法
 

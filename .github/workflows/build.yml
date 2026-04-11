@@ -19,7 +19,8 @@ jobs:
           cd openwrt-imagebuilder-22.03.7-ath79-generic.Linux-x86_64
           make image PROFILE="tplink_tl-wr710n-v1" \
             PACKAGES="shadowsocks-libev-ss-redir shadowsocks-libev-ss-tunnel iptables-mod-tproxy ip-full ipset \
-            -luci -luci-base -luci-lib-ip -luci-lib-jsonc -luci-lib-nixio -uhttpd \
+            luci-base luci-mod-admin-full luci-mod-network luci-mod-status luci-mod-system luci-theme-bootstrap uhttpd \
+            -luci-app-firewall -luci-app-opkg -luci-proto-ipv6 -luci-proto-ppp -luci-ssl \
             -ppp -ppp-mod-pppoe -kmod-pppoe -kmod-pppox"
 
       - name: Upload firmware
