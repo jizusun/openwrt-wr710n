@@ -11,7 +11,7 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     strategy:
       fail-fast: false
       matrix:
@@ -42,7 +42,6 @@ jobs:
       - name: Build firmware
         run: |
           cd imagebuilder
-          sed -i 's/$(STAGING_DIR_HOST)\/bin\/python")/true)/' include/prereq-build.mk
           make image PROFILE="${{ env.PROFILE }}" \
             PACKAGES="${{ matrix.packages }}" \
             FILES="../files"
