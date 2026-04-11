@@ -14,12 +14,14 @@ start() {
         return 1
     fi
 
-    ss-redir -c "$SS_CONF" -l 1080 -u -f "$SS_REDIR_PID"
+    ss-redir -c "$SS_CONF" -u -f "$SS_REDIR_PID"
     ss-tunnel -c "$SS_CONF" -l 5353 -L 8.8.8.8:53 -u -f "$SS_TUNNEL_PID"
     setup_iptables
+    setup_dns
 }
 
 stop() {
+    restore_dns
     cleanup_iptables
     kill "$(cat "$SS_REDIR_PID" 2>/dev/null)" 2>/dev/null
     kill "$(cat "$SS_TUNNEL_PID" 2>/dev/null)" 2>/dev/null
@@ -32,16 +34,31 @@ get_server_ip() {
     resolveip -4 "$server" | head -1
 }
 
+setup_dns() {
+    # Point dnsmasq to ss-tunnel to prevent DNS pollution
+    uci set dhcp.@dnsmasq[0].noresolv='1'
+    uci -q delete dhcp.@dnsmasq[0].server
+    uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
+    uci commit dhcp
+    /etc/init.d/dnsmasq restart
+}
+
+restore_dns() {
+    # Restore default DNS (use upstream resolv.conf)
+    uci -q delete dhcp.@dnsmasq[0].noresolv
+    uci -q delete dhcp.@dnsmasq[0].server
+    uci commit dhcp
+    /etc/init.d/dnsmasq restart
+}
+
 setup_iptables() {
     local server_ip
     server_ip=$(get_server_ip)
 
-    # Load China IP ranges into ipset
+    # Load China IP ranges into ipset (batch import for speed)
     ipset create chnroute hash:net -exist
     if [ -f "$CHNROUTE" ]; then
-        while read -r cidr; do
-            ipset add chnroute "$cidr" 2>/dev/null
-        done < "$CHNROUTE"
+        sed 's/^/add chnroute /' "$CHNROUTE" | ipset restore -exist
     fi
 
     iptables -t nat -N SS_REDIR 2>/dev/null || return
