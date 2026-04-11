@@ -16,13 +16,13 @@ start() {
 
     ss-redir -c "$SS_CONF" -u -f "$SS_REDIR_PID"
     ss-tunnel -c "$SS_CONF" -l 5353 -L 8.8.8.8:53 -u -f "$SS_TUNNEL_PID"
-    setup_iptables
+    setup_nftables
     setup_dns
 }
 
 stop() {
     restore_dns
-    cleanup_iptables
+    cleanup_nftables
     kill "$(cat "$SS_REDIR_PID" 2>/dev/null)" 2>/dev/null
     kill "$(cat "$SS_TUNNEL_PID" 2>/dev/null)" 2>/dev/null
     rm -f "$SS_REDIR_PID" "$SS_TUNNEL_PID"
@@ -35,7 +35,6 @@ get_server_ip() {
 }
 
 setup_dns() {
-    # Point dnsmasq to ss-tunnel to prevent DNS pollution
     uci set dhcp.@dnsmasq[0].noresolv='1'
     uci -q delete dhcp.@dnsmasq[0].server
     uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
@@ -44,46 +43,43 @@ setup_dns() {
 }
 
 restore_dns() {
-    # Restore default DNS (use upstream resolv.conf)
     uci -q delete dhcp.@dnsmasq[0].noresolv
     uci -q delete dhcp.@dnsmasq[0].server
     uci commit dhcp
     /etc/init.d/dnsmasq restart
 }
 
-setup_iptables() {
+setup_nftables() {
     local server_ip
     server_ip=$(get_server_ip)
 
-    # Load China IP ranges into ipset (batch import for speed)
-    ipset create chnroute hash:net -exist
+    # Create nftables set for China IPs
+    nft add table ip ss
+    nft add set ip ss chnroute { type ipv4_addr \; flags interval \; }
+
+    # Batch load chnroute
     if [ -f "$CHNROUTE" ]; then
-        sed 's/^/add chnroute /' "$CHNROUTE" | ipset restore -exist
+        local elements
+        elements=$(sed ':a;N;$!ba;s/\n/, /g' "$CHNROUTE")
+        nft add element ip ss chnroute { $elements }
     fi
 
-    iptables -t nat -N SS_REDIR 2>/dev/null || return
-    # Skip private/reserved addresses
-    iptables -t nat -A SS_REDIR -d 0.0.0.0/8 -j RETURN
-    iptables -t nat -A SS_REDIR -d 10.0.0.0/8 -j RETURN
-    iptables -t nat -A SS_REDIR -d 127.0.0.0/8 -j RETURN
-    iptables -t nat -A SS_REDIR -d 169.254.0.0/16 -j RETURN
-    iptables -t nat -A SS_REDIR -d 172.16.0.0/12 -j RETURN
-    iptables -t nat -A SS_REDIR -d 192.168.0.0/16 -j RETURN
-    iptables -t nat -A SS_REDIR -d 224.0.0.0/4 -j RETURN
-    iptables -t nat -A SS_REDIR -d 240.0.0.0/4 -j RETURN
-    # Skip SS server
-    [ -n "$server_ip" ] && iptables -t nat -A SS_REDIR -d "$server_ip" -j RETURN
-    # Skip China IPs (direct connection)
-    iptables -t nat -A SS_REDIR -m set --match-set chnroute dst -j RETURN
-    # Everything else goes through proxy
-    iptables -t nat -A SS_REDIR -p tcp -j REDIRECT --to-ports 1080
+    # Create redirect chain
+    nft add chain ip ss prerouting { type nat hook prerouting priority -100 \; }
 
-    iptables -t nat -A PREROUTING -p tcp -j SS_REDIR
+    # Skip private/reserved addresses
+    nft add rule ip ss prerouting ip daddr { 0.0.0.0/8, 10.0.0.0/8, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4 } return
+
+    # Skip SS server
+    [ -n "$server_ip" ] && nft add rule ip ss prerouting ip daddr "$server_ip" return
+
+    # Skip China IPs
+    nft add rule ip ss prerouting ip daddr @chnroute return
+
+    # Redirect TCP to ss-redir
+    nft add rule ip ss prerouting tcp dport != 22 redirect to :1080
 }
 
-cleanup_iptables() {
-    iptables -t nat -D PREROUTING -p tcp -j SS_REDIR 2>/dev/null
-    iptables -t nat -F SS_REDIR 2>/dev/null
-    iptables -t nat -X SS_REDIR 2>/dev/null
-    ipset destroy chnroute 2>/dev/null
+cleanup_nftables() {
+    nft delete table ip ss 2>/dev/null
 }
