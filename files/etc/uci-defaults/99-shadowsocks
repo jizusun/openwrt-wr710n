@@ -1,5 +1,5 @@
 #!/bin/sh
-# First boot: configure LAN IP, enable shadowsocks, setup cron/adblock
+# First boot: configure LAN IP, enable shadowsocks, setup cron
 
 # LAN IP: avoid conflict with main router (192.168.1.x)
 uci set network.lan.ipaddr='192.168.2.1'
@@ -7,15 +7,6 @@ uci commit network
 
 chmod +x /etc/init.d/shadowsocks
 /etc/init.d/shadowsocks enable
-
-# DNS: keep upstream resolv working by default
-# ss-tunnel DNS will be activated when shadowsocks starts
-# (init script handles dnsmasq reconfiguration)
-
-# Ad blocking: load adblock hosts into dnsmasq
-uci -q delete dhcp.@dnsmasq[0].addnhosts
-uci add_list dhcp.@dnsmasq[0].addnhosts='/etc/shadowsocks-libev/adblock.hosts'
-uci commit dhcp
 
 # Cron: ss-redir watchdog every 5 minutes
 chmod +x /etc/shadowsocks-libev/watchdog.sh
