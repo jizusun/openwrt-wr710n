@@ -15,13 +15,13 @@ jobs:
             desc: "完整 LuCI + shadowsocks + IPv6"
             packages: >-
               shadowsocks-libev-ss-redir shadowsocks-libev-ss-tunnel
-              iptables-mod-tproxy ip-full ipset
+              iptables-nft iptables-mod-tproxy ip-full ipset kmod-ipt-nat
               -ppp -ppp-mod-pppoe -kmod-pppoe -kmod-pppox
           - name: mini-luci
             desc: "最小 LuCI + shadowsocks + IPv6"
             packages: >-
               shadowsocks-libev-ss-redir shadowsocks-libev-ss-tunnel
-              iptables-mod-tproxy ip-full ipset
+              iptables-nft iptables-mod-tproxy ip-full ipset kmod-ipt-nat
               luci-base luci-mod-admin-full luci-mod-network luci-mod-status luci-mod-system luci-theme-bootstrap uhttpd
               -luci-app-firewall -luci-app-opkg -luci-proto-ipv6 -luci-proto-ppp -luci-ssl
               -ppp -ppp-mod-pppoe -kmod-pppoe -kmod-pppox
@@ -29,7 +29,7 @@ jobs:
             desc: "shadowsocks + IPv6, no LuCI"
             packages: >-
               shadowsocks-libev-ss-redir shadowsocks-libev-ss-tunnel
-              iptables-mod-tproxy ip-full ipset
+              iptables-nft iptables-mod-tproxy ip-full ipset kmod-ipt-nat
               -luci -luci-base -luci-lib-ip -luci-lib-jsonc -luci-lib-nixio -uhttpd
               -ppp -ppp-mod-pppoe -kmod-pppoe -kmod-pppox
 
