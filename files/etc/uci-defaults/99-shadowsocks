@@ -8,3 +8,18 @@ uci set dhcp.@dnsmasq[0].noresolv='1'
 uci -q delete dhcp.@dnsmasq[0].server
 uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
 uci commit dhcp
+
+# Ad blocking: load adblock hosts into dnsmasq
+uci -q delete dhcp.@dnsmasq[0].addnhosts
+uci add_list dhcp.@dnsmasq[0].addnhosts='/etc/shadowsocks-libev/adblock.hosts'
+uci commit dhcp
+
+# Cron: ss-redir watchdog every 5 minutes
+chmod +x /etc/shadowsocks-libev/watchdog.sh
+echo "*/5 * * * * /etc/shadowsocks-libev/watchdog.sh" >> /etc/crontabs/root
+
+# Cron: reboot daily at 4:30 AM
+echo "30 4 * * * reboot" >> /etc/crontabs/root
+
+/etc/init.d/cron enable
+/etc/init.d/cron start
