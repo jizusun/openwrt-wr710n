@@ -118,9 +118,13 @@ service redsocks enable    # 开机自启
 /etc/init.d/firewall restart
 ```
 
-## 5. 方案二：Shadowsocks-libev (ss-redir)
+## 5. 方案二：Shadowsocks-libev (ss-redir)（本机实际使用方案）
 
-适用于你有 Shadowsocks 服务端的场景。`ss-redir` 是专为透明代理设计的组件。
+本机使用 Shadowsocks 代理，配置名称 `my-singbox`，加密方式 `aes-128-gcm`。
+
+`ss-redir` 是 shadowsocks-libev 中专为透明代理设计的组件，资源占用低，适合 AR9331 这类低性能 CPU。
+
+> **关于 aes-128-gcm**: 相比 aes-256-gcm，密钥长度更短，在 AR9331 (400MHz MIPS) 上加密开销更小，吞吐量更高，同时安全性对日常使用完全足够。推荐在低性能设备上优先选择。
 
 ### 5.1 安装
 
@@ -136,27 +140,30 @@ opkg install shadowsocks-libev-ss-redir iptables iptables-mod-tproxy
 ```json
 {
     "server": "<SS_SERVER_IP>",
-    "server_port": 8388,
+    "server_port": <SS_SERVER_PORT>,
     "local_address": "0.0.0.0",
     "local_port": 1088,
     "password": "<SS_PASSWORD>",
     "timeout": 300,
-    "method": "aes-256-gcm"
+    "method": "aes-128-gcm"
 }
 ```
 
-### 5.3 配置 iptables
+将 `<SS_SERVER_IP>`、`<SS_SERVER_PORT>`、`<SS_PASSWORD>` 替换为你的实际服务器信息。
+
+### 5.3 配置 iptables 透明转发
 
 创建 `/etc/firewall.user`：
 
 ```bash
+#!/bin/sh
 SS_REDIR_PORT=1088
 SS_SERVER=<SS_SERVER_IP>
 
 iptables -t nat -N SS_REDIR 2>/dev/null
 iptables -t nat -F SS_REDIR
 
-# 排除私有地址和服务器地址
+# 排除私有地址和服务器地址（避免回环）
 iptables -t nat -A SS_REDIR -d $SS_SERVER -j RETURN
 iptables -t nat -A SS_REDIR -d 0.0.0.0/8 -j RETURN
 iptables -t nat -A SS_REDIR -d 10.0.0.0/8 -j RETURN
@@ -166,17 +173,50 @@ iptables -t nat -A SS_REDIR -d 172.16.0.0/12 -j RETURN
 iptables -t nat -A SS_REDIR -d 192.168.0.0/16 -j RETURN
 iptables -t nat -A SS_REDIR -d 224.0.0.0/4 -j RETURN
 
-# 重定向 TCP 到 ss-redir
+# TCP 流量重定向到 ss-redir
 iptables -t nat -A SS_REDIR -p tcp -j REDIRECT --to-ports $SS_REDIR_PORT
 
+# 对 LAN 入站流量应用规则
 iptables -t nat -A PREROUTING -i br-lan -p tcp -j SS_REDIR
 ```
 
-### 5.4 启动
+### 5.4 创建开机自启脚本
+
+创建 `/etc/init.d/ss-redir`：
 
 ```bash
-ss-redir -c /etc/shadowsocks-libev/redir.json -u &
+#!/bin/sh /etc/rc.common
+START=95
+STOP=15
+
+start() {
+    ss-redir -c /etc/shadowsocks-libev/redir.json -u -f /var/run/ss-redir.pid
+}
+
+stop() {
+    kill $(cat /var/run/ss-redir.pid) 2>/dev/null
+    rm -f /var/run/ss-redir.pid
+}
+```
+
+```bash
+chmod +x /etc/init.d/ss-redir
+/etc/init.d/ss-redir enable
+/etc/init.d/ss-redir start
 /etc/init.d/firewall restart
+```
+
+### 5.5 验证代理是否生效
+
+```bash
+# 检查 ss-redir 进程
+ps | grep ss-redir
+
+# 检查监听端口
+netstat -tlnp | grep 1088
+
+# 从 LAN 侧设备测试
+curl -I https://www.google.com
 ```
 
 ## 6. DNS 防污染（可选但推荐）
