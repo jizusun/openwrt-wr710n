@@ -1,0 +1,56 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+STOP=10
+
+SS_CONF="/etc/shadowsocks-libev/config.json"
+SS_REDIR_PID="/var/run/ss-redir.pid"
+SS_TUNNEL_PID="/var/run/ss-tunnel.pid"
+
+start() {
+    if grep -q "YOUR_SERVER" "$SS_CONF"; then
+        echo "Please edit $SS_CONF first"
+        return 1
+    fi
+
+    ss-redir -c "$SS_CONF" -l 1080 -u -f "$SS_REDIR_PID"
+    ss-tunnel -c "$SS_CONF" -l 5353 -L 8.8.8.8:53 -u -f "$SS_TUNNEL_PID"
+    setup_iptables
+}
+
+stop() {
+    cleanup_iptables
+    kill "$(cat "$SS_REDIR_PID" 2>/dev/null)" 2>/dev/null
+    kill "$(cat "$SS_TUNNEL_PID" 2>/dev/null)" 2>/dev/null
+    rm -f "$SS_REDIR_PID" "$SS_TUNNEL_PID"
+}
+
+get_server_ip() {
+    local server
+    server=$(jsonfilter -i "$SS_CONF" -e '@.server')
+    resolveip -4 "$server" | head -1
+}
+
+setup_iptables() {
+    local server_ip
+    server_ip=$(get_server_ip)
+
+    iptables -t nat -N SS_REDIR 2>/dev/null || return
+    iptables -t nat -A SS_REDIR -d 0.0.0.0/8 -j RETURN
+    iptables -t nat -A SS_REDIR -d 10.0.0.0/8 -j RETURN
+    iptables -t nat -A SS_REDIR -d 127.0.0.0/8 -j RETURN
+    iptables -t nat -A SS_REDIR -d 169.254.0.0/16 -j RETURN
+    iptables -t nat -A SS_REDIR -d 172.16.0.0/12 -j RETURN
+    iptables -t nat -A SS_REDIR -d 192.168.0.0/16 -j RETURN
+    iptables -t nat -A SS_REDIR -d 224.0.0.0/4 -j RETURN
+    iptables -t nat -A SS_REDIR -d 240.0.0.0/4 -j RETURN
+    [ -n "$server_ip" ] && iptables -t nat -A SS_REDIR -d "$server_ip" -j RETURN
+    iptables -t nat -A SS_REDIR -p tcp -j REDIRECT --to-ports 1080
+    iptables -t nat -A PREROUTING -p tcp -j SS_REDIR
+}
+
+cleanup_iptables() {
+    iptables -t nat -D PREROUTING -p tcp -j SS_REDIR 2>/dev/null
+    iptables -t nat -F SS_REDIR 2>/dev/null
+    iptables -t nat -X SS_REDIR 2>/dev/null
+}

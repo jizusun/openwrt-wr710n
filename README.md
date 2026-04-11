@@ -58,42 +58,25 @@ ssh root@192.168.2.1 "sysupgrade -n /tmp/openwrt-*-sysupgrade.bin"
 
 ## 刷入后配置 Shadowsocks
 
+只需编辑一个文件，填入你的服务器信息：
+
 ```bash
-# 创建配置文件
-cat > /etc/shadowsocks-libev/config.json << 'EOF'
-{
-    "server": "你的服务器地址",
-    "server_port": 端口,
-    "local_address": "0.0.0.0",
-    "local_port": 1080,
-    "password": "你的密码",
-    "method": "aes-128-gcm",
-    "mode": "tcp_and_udp"
-}
-EOF
-
-# 启动 ss-redir 透明代理
-ss-redir -c /etc/shadowsocks-libev/config.json -l 1080 -u -f /var/run/ss-redir.pid
-
-# 启动 ss-tunnel DNS 隧道（防 DNS 污染）
-ss-tunnel -c /etc/shadowsocks-libev/config.json -l 5353 -L 8.8.8.8:53 -u -f /var/run/ss-tunnel.pid
-
-# 配置 iptables 透明转发（按需调整）
-iptables -t nat -N SS_REDIR
-iptables -t nat -A SS_REDIR -d 0.0.0.0/8 -j RETURN
-iptables -t nat -A SS_REDIR -d 10.0.0.0/8 -j RETURN
-iptables -t nat -A SS_REDIR -d 127.0.0.0/8 -j RETURN
-iptables -t nat -A SS_REDIR -d 172.16.0.0/12 -j RETURN
-iptables -t nat -A SS_REDIR -d 192.168.0.0/16 -j RETURN
-iptables -t nat -A SS_REDIR -p tcp -j REDIRECT --to-ports 1080
-iptables -t nat -A PREROUTING -p tcp -j SS_REDIR
-
-# 将 DNS 指向 ss-tunnel
-uci set dhcp.@dnsmasq[0].noresolv='1'
-uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
-uci commit dhcp
-/etc/init.d/dnsmasq restart
+ssh root@192.168.2.1
+vi /etc/shadowsocks-libev/config.json
 ```
+
+把 `YOUR_SERVER` 和 `YOUR_PASSWORD` 改成你的实际值，然后启动：
+
+```bash
+/etc/init.d/shadowsocks start
+```
+
+固件已预配置好以下自动化：
+- `ss-redir` 透明代理（TCP + UDP）
+- `ss-tunnel` DNS 隧道（转发到 8.8.8.8，防 DNS 污染）
+- iptables 规则自动设置（私有地址段绕过代理）
+- dnsmasq 自动指向 ss-tunnel
+- 开机自启动
 
 ## 网络拓扑
 

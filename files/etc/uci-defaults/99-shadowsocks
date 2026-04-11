@@ -1,0 +1,10 @@
+#!/bin/sh
+# First boot: enable shadowsocks service and configure DNS
+chmod +x /etc/init.d/shadowsocks
+/etc/init.d/shadowsocks enable
+
+# DNS: forward to ss-tunnel to prevent pollution
+uci set dhcp.@dnsmasq[0].noresolv='1'
+uci -q delete dhcp.@dnsmasq[0].server
+uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
+uci commit dhcp
