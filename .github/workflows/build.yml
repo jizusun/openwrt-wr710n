@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
 
+env:
+  OPENWRT_VERSION: "19.07.10"
+  IMAGEBUILDER_URL: "https://downloads.openwrt.org/releases/19.07.10/targets/ath79/generic/openwrt-imagebuilder-19.07.10-ath79-generic.Linux-x86_64.tar.xz"
+  PROFILE: "tplink_tl-wr710n-v1"
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -11,26 +16,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: full-luci
-            desc: "完整 LuCI + shadowsocks + IPv6"
+          - name: full
+            desc: "iptables + shadowsocks + IPv6"
             packages: >-
-              shadowsocks-libev-ss-redir
-              ip-full
-              -ppp -ppp-mod-pppoe -kmod-pppoe -kmod-pppox
-          - name: mini-luci
-            desc: "最小 LuCI + shadowsocks + IPv6"
-            packages: >-
-              shadowsocks-libev-ss-redir
-              ip-full
-              luci-base luci-mod-admin-full luci-mod-network luci-mod-status luci-mod-system luci-theme-bootstrap uhttpd
-              -luci-app-firewall -luci-app-opkg -luci-proto-ipv6 -luci-proto-ppp -luci-ssl
-              -ppp -ppp-mod-pppoe -kmod-pppoe -kmod-pppox
-          - name: no-luci
-            desc: "shadowsocks + IPv6, no LuCI"
-            packages: >-
-              shadowsocks-libev-ss-redir
-              ip-full
-              -luci -luci-base -luci-lib-ip -luci-lib-jsonc -luci-lib-nixio -uhttpd
+              shadowsocks-libev-ss-redir shadowsocks-libev-ss-tunnel
+              iptables-mod-nat-extra ip-full ipset
               -ppp -ppp-mod-pppoe -kmod-pppoe -kmod-pppox
 
     name: "${{ matrix.name }} - ${{ matrix.desc }}"
@@ -39,8 +29,8 @@ jobs:
 
       - name: Download ImageBuilder
         run: |
-          wget -q https://downloads.openwrt.org/releases/22.03.7/targets/ath79/generic/openwrt-imagebuilder-22.03.7-ath79-generic.Linux-x86_64.tar.xz
-          tar xf openwrt-imagebuilder-22.03.7-ath79-generic.Linux-x86_64.tar.xz
+          wget -q ${{ env.IMAGEBUILDER_URL }}
+          tar xf openwrt-imagebuilder-*.tar.xz
 
       - name: Download chnroute
         run: |
@@ -50,8 +40,8 @@ jobs:
 
       - name: Build firmware
         run: |
-          cd openwrt-imagebuilder-22.03.7-ath79-generic.Linux-x86_64
-          make image PROFILE="tplink_tl-wr710n-v1" \
+          cd openwrt-imagebuilder-*
+          make image PROFILE="${{ env.PROFILE }}" \
             PACKAGES="${{ matrix.packages }}" \
             FILES="../files"
 

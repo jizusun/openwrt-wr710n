@@ -5,6 +5,7 @@ STOP=10
 
 SS_CONF="/etc/shadowsocks-libev/config.json"
 SS_REDIR_PID="/var/run/ss-redir.pid"
+SS_TUNNEL_PID="/var/run/ss-tunnel.pid"
 CHNROUTE="/etc/shadowsocks-libev/chnroute.txt"
 
 start() {
@@ -14,26 +15,29 @@ start() {
     fi
 
     ss-redir -c "$SS_CONF" -f "$SS_REDIR_PID"
-    setup_nftables
+    ss-tunnel -c "$SS_CONF" -l 5353 -L 8.8.8.8:53 -f "$SS_TUNNEL_PID"
+    setup_iptables
     setup_dns
 }
 
 stop() {
     restore_dns
-    cleanup_nftables
+    cleanup_iptables
     kill "$(cat "$SS_REDIR_PID" 2>/dev/null)" 2>/dev/null
-    rm -f "$SS_REDIR_PID"
+    kill "$(cat "$SS_TUNNEL_PID" 2>/dev/null)" 2>/dev/null
+    rm -f "$SS_REDIR_PID" "$SS_TUNNEL_PID"
 }
 
 get_server_ip() {
-    jsonfilter -i "$SS_CONF" -e '@.server'
+    local server
+    server=$(jsonfilter -i "$SS_CONF" -e '@.server')
+    resolveip -4 "$server" 2>/dev/null | head -1
 }
 
 setup_dns() {
     uci set dhcp.@dnsmasq[0].noresolv='1'
     uci -q delete dhcp.@dnsmasq[0].server
-    uci add_list dhcp.@dnsmasq[0].server='8.8.8.8'
-    uci add_list dhcp.@dnsmasq[0].server='8.8.4.4'
+    uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
     uci commit dhcp
     /etc/init.d/dnsmasq restart
 }
@@ -45,32 +49,47 @@ restore_dns() {
     /etc/init.d/dnsmasq restart
 }
 
-setup_nftables() {
+setup_iptables() {
     local server_ip
     server_ip=$(get_server_ip)
 
-    nft add table ip ss
-    nft add chain ip ss prerouting { type nat hook prerouting priority -100 \; }
-
-    # Skip private/reserved
-    nft add rule ip ss prerouting ip daddr { 0.0.0.0/8, 10.0.0.0/8, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4 } return
-
-    # Skip SS server
-    [ -n "$server_ip" ] && nft add rule ip ss prerouting ip daddr "$server_ip" return
-
-    # Load chnroute
+    # Load chnroute into ipset
+    ipset create chnroute hash:net -exist
     if [ -f "$CHNROUTE" ]; then
-        nft add set ip ss chnroute { type ipv4_addr \; flags interval \; }
-        local elements
-        elements=$(sed ':a;N;$!ba;s/\n/, /g' "$CHNROUTE")
-        nft add element ip ss chnroute { $elements }
-        nft add rule ip ss prerouting ip daddr @chnroute return
+        sed 's/^/add chnroute /' "$CHNROUTE" | ipset restore -exist
     fi
 
-    # Redirect TCP (except SSH) to ss-redir
-    nft add rule ip ss prerouting tcp dport != 22 redirect to :1080
+    iptables -t nat -N SS_REDIR 2>/dev/null || return
+    # Skip private/reserved
+    iptables -t nat -A SS_REDIR -d 0.0.0.0/8 -j RETURN
+    iptables -t nat -A SS_REDIR -d 10.0.0.0/8 -j RETURN
+    iptables -t nat -A SS_REDIR -d 127.0.0.0/8 -j RETURN
+    iptables -t nat -A SS_REDIR -d 169.254.0.0/16 -j RETURN
+    iptables -t nat -A SS_REDIR -d 172.16.0.0/12 -j RETURN
+    iptables -t nat -A SS_REDIR -d 192.168.0.0/16 -j RETURN
+    iptables -t nat -A SS_REDIR -d 224.0.0.0/4 -j RETURN
+    iptables -t nat -A SS_REDIR -d 240.0.0.0/4 -j RETURN
+    # Skip SS server
+    [ -n "$server_ip" ] && iptables -t nat -A SS_REDIR -d "$server_ip" -j RETURN
+    # Skip China IPs
+    iptables -t nat -A SS_REDIR -m set --match-set chnroute dst -j RETURN
+    # Redirect TCP to ss-redir
+    iptables -t nat -A SS_REDIR -p tcp -j REDIRECT --to-ports 1080
+
+    iptables -t nat -A PREROUTING -p tcp -j SS_REDIR
+
+    # DNS hijack
+    iptables -t nat -A PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 53
+
+    # Block QUIC
+    iptables -A FORWARD -p udp --dport 443 -j DROP
 }
 
-cleanup_nftables() {
-    nft delete table ip ss 2>/dev/null
+cleanup_iptables() {
+    iptables -t nat -D PREROUTING -p tcp -j SS_REDIR 2>/dev/null
+    iptables -t nat -F SS_REDIR 2>/dev/null
+    iptables -t nat -X SS_REDIR 2>/dev/null
+    iptables -t nat -D PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 53 2>/dev/null
+    iptables -D FORWARD -p udp --dport 443 -j DROP 2>/dev/null
+    ipset destroy chnroute 2>/dev/null
 }
