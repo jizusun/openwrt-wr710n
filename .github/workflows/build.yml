@@ -41,8 +41,8 @@ jobs:
 
       - name: Build firmware
         run: |
-          sudo ln -sf /usr/bin/python3 /usr/bin/python
           cd imagebuilder
+          sed -i 's/$(STAGING_DIR_HOST)\/bin\/python")/true)/' include/prereq-build.mk
           make image PROFILE="${{ env.PROFILE }}" \
             PACKAGES="${{ matrix.packages }}" \
             FILES="../files"
