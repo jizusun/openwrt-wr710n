@@ -41,11 +41,11 @@ jobs:
 
       - name: Build firmware
         run: |
+          sudo ln -sf /usr/bin/python3 /usr/bin/python
           cd imagebuilder
           make image PROFILE="${{ env.PROFILE }}" \
             PACKAGES="${{ matrix.packages }}" \
-            FILES="../files" \
-            FORCE=1
+            FILES="../files"
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4
