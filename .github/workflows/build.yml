@@ -11,7 +11,7 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
@@ -26,6 +26,12 @@ jobs:
     name: "${{ matrix.name }} - ${{ matrix.desc }}"
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Python 2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python2
+          sudo ln -sf /usr/bin/python2 /usr/bin/python
 
       - name: Download ImageBuilder
         run: |
