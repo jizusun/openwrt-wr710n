@@ -26,7 +26,6 @@
 **去掉的包（省空间）：**
 - LuCI（网页管理界面，全部通过 SSH 配置）
 - PPP / PPPoE（WAN 口使用 DHCP，不需要拨号）
-- IPv6 相关（odhcp6c, ip6tables）
 
 **保留的基础功能：**
 - SSH (dropbear)

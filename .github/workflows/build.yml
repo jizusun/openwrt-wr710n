@@ -20,7 +20,7 @@ jobs:
           make image PROFILE="tplink_tl-wr710n-v1" \
             PACKAGES="shadowsocks-libev-ss-redir shadowsocks-libev-ss-tunnel iptables-mod-tproxy ip-full ipset \
             -luci -luci-base -luci-lib-ip -luci-lib-jsonc -luci-lib-nixio -uhttpd \
-            -ppp -ppp-mod-pppoe -kmod-pppoe -kmod-pppox -odhcp6c -kmod-ipv6 -ip6tables"
+            -ppp -ppp-mod-pppoe -kmod-pppoe -kmod-pppox"
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4
