@@ -1,7 +1,8 @@
 name: Build OpenWrt for TL-WR710N v1
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
 
 jobs:
   build:
