@@ -7,16 +7,37 @@ TL-WR710N v1 存在多个子版本，硬件差异很大：
 | 子版本 | Flash | RAM | OpenWrt 兼容性 |
 |--------|-------|-----|---------------|
 | v1.0 (US) | **2MB** | **16MB** | ❌ 不支持 OpenWrt |
-| v1.1 / v1.2 (EU/UK) | **8MB** | **32MB** | ⚠️ 有限支持 |
+| v1.1 / v1.2 (EU/UK) | **8MB** | **64MB** | ✅ 支持 |
 
 共同规格：
-- CPU: Atheros AR9331 (MIPS 24Kc, 400MHz)
+- CPU: Atheros AR9330 rev 1 (MIPS 24Kc V7.4, 400MHz)
 - 网口: 2x 100Mbps (WAN/LAN)
 - WiFi: 2.4GHz 802.11b/g/n (150Mbps)
 - USB: 1x USB 2.0
 - 电源: AC 供电
 
-> ⚠️ **重要提示**: v1.0 (US) 仅 2MB/16MB，无法运行 OpenWrt。以下内容仅适用于 8MB/32MB 版本（v1.1/v1.2）。
+实际硬件验证（通过 SSH 确认）：
+
+| 项目 | 实际值 |
+|------|--------|
+| 型号 | TP-Link TL-WR710N v1 |
+| SoC | Atheros AR9330 rev 1 |
+| CPU | MIPS 24Kc V7.4 (BogoMIPS 265) |
+| RAM | 64MB（系统可用约 60MB，空闲约 37MB） |
+| Flash | 8MB（firmware 分区 7.8MB） |
+| ISA | mips32r2, 支持 mips16 ASE |
+
+Flash 分区布局：
+```
+mtd0: 128KB   u-boot
+mtd1: 1.5MB   kernel
+mtd2: 6.3MB   rootfs
+mtd3: 3.9MB   rootfs_data (overlay, 可用 3.6MB)
+mtd4: 64KB    art (无线校准)
+mtd5: 7.8MB   firmware (整体)
+```
+
+> ⚠️ **重要提示**: v1.0 (US) 仅 2MB/16MB，无法运行 OpenWrt。以下内容仅适用于 8MB/64MB 版本（v1.1/v1.2）。
 
 ## 2. OpenWrt 版本选择
 
@@ -26,7 +47,7 @@ TL-WR710N v1 存在多个子版本，硬件差异很大：
 | 21.02.x / 22.03.x | ⚠️ 勉强可用 | 需自行编译精简固件，空间极其紧张 |
 | 23.05+ | ❌ 不推荐 | 基本无法塞入 8MB flash |
 
-**推荐**: 使用 OpenWrt 19.07.10，target 为 `ath79/tiny`。
+**推荐**: 使用 OpenWrt 19.07.10，target 为 `ath79/tiny`。64MB RAM 版本运行较为宽裕，可同时运行 shadowsocks-libev + chnroute 分流无压力。
 
 固件下载地址：
 ```
@@ -317,8 +338,8 @@ make -j$(nproc)
 1. **安全风险**: OpenWrt 19.07 已停止安全更新，存在已知漏洞，不建议暴露在公网
 2. **性能瓶颈**: AR9331 (400MHz MIPS) 处理加密流量能力有限，Shadowsocks 吞吐约 5-15Mbps
 3. **仅支持 TCP**: redsocks 仅转发 TCP，UDP 流量（如部分游戏、视频通话）不会经过代理
-4. **RAM 紧张**: 32MB RAM 运行 OpenWrt + 代理后剩余很少，避免同时运行过多服务
-5. **硬件版本确认**: 刷机前务必确认你的设备是 8MB flash 版本（v1.1/v1.2），2MB 版本无法使用
+4. **RAM 充裕**: 64MB RAM 运行 OpenWrt + shadowsocks 后仍有约 37MB 空闲，可稳定运行
+5. **硬件版本确认**: 刷机前务必确认你的设备是 8MB flash / 64MB RAM 版本（v1.1/v1.2），2MB/16MB 版本（v1.0 US）无法使用
 
 ## 参考博客与教程
 

@@ -1,0 +1,48 @@
+# Transparent proxy via ss-redir with China IP bypass
+# SS_SERVER must match "server" in /etc/shadowsocks-libev/config.json
+SS_SERVER=YOUR_SERVER_IP
+REDIR_PORT=12345
+
+# === Load China IP list into ipset ===
+ipset create chnroute hash:net -exist
+ipset flush chnroute
+if [ -f /etc/shadowsocks-libev/chnroute.txt ]; then
+    while read cidr; do
+        ipset add chnroute "$cidr" 2>/dev/null
+    done < /etc/shadowsocks-libev/chnroute.txt
+fi
+
+# === LAN traffic (PREROUTING) ===
+iptables -t nat -N SS_REDIR 2>/dev/null
+iptables -t nat -F SS_REDIR
+iptables -t nat -A SS_REDIR -d $SS_SERVER -j RETURN
+iptables -t nat -A SS_REDIR -d 0.0.0.0/8 -j RETURN
+iptables -t nat -A SS_REDIR -d 10.0.0.0/8 -j RETURN
+iptables -t nat -A SS_REDIR -d 127.0.0.0/8 -j RETURN
+iptables -t nat -A SS_REDIR -d 169.254.0.0/16 -j RETURN
+iptables -t nat -A SS_REDIR -d 172.16.0.0/12 -j RETURN
+iptables -t nat -A SS_REDIR -d 192.168.0.0/16 -j RETURN
+iptables -t nat -A SS_REDIR -d 224.0.0.0/4 -j RETURN
+iptables -t nat -A SS_REDIR -m set --match-set chnroute dst -j RETURN
+iptables -t nat -A SS_REDIR -p tcp -j REDIRECT --to-ports $REDIR_PORT
+iptables -t nat -A PREROUTING -i br-lan -p tcp -j SS_REDIR
+
+# === Router own traffic (OUTPUT) ===
+iptables -t nat -A OUTPUT -p tcp -d $SS_SERVER -j RETURN
+iptables -t nat -A OUTPUT -p tcp -d 127.0.0.0/8 -j RETURN
+iptables -t nat -A OUTPUT -p tcp -d 10.0.0.0/8 -j RETURN
+iptables -t nat -A OUTPUT -p tcp -d 172.16.0.0/12 -j RETURN
+iptables -t nat -A OUTPUT -p tcp -d 192.168.0.0/16 -j RETURN
+iptables -t nat -A OUTPUT -p tcp -d 224.0.0.0/4 -j RETURN
+iptables -t nat -A OUTPUT -p tcp -m set --match-set chnroute dst -j RETURN
+iptables -t nat -A OUTPUT -p tcp -j REDIRECT --to-ports $REDIR_PORT
+
+# === DNS hijack (force all LAN DNS to router) ===
+iptables -t nat -I PREROUTING -i br-lan -p udp --dport 53 -j REDIRECT --to-ports 53
+iptables -t nat -I PREROUTING -i br-lan -p tcp --dport 53 -j REDIRECT --to-ports 53
+
+# === Block DoT (prevent DNS leak via port 853) ===
+iptables -I FORWARD -i br-lan -p tcp --dport 853 -j REJECT
+
+# === Block IPv6 forwarding (force IPv4 through proxy) ===
+ip6tables -I FORWARD -i br-lan -j DROP

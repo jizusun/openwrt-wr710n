@@ -1,3 +1,0 @@
-#!/bin/sh
-# First boot: enable shadowsocks (but don't start), no cron reboot
-chmod +x /etc/init.d/shadowsocks
