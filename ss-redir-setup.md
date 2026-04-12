@@ -1,5 +1,132 @@
 # Shadowsocks Redir Setup — OpenWrt WR710
 
+## How It Works
+
+Understanding the moving parts makes troubleshooting much easier. Here is a full walkthrough of what happens when a client device on the LAN sends a TCP request, and how DNS is handled separately.
+
+### Architecture Overview
+
+```
+Client device (192.168.2.x)
+    │
+    │  TCP connection to, e.g., google.com:443
+    ▼
+[TL-WR710N — OpenWrt]
+    │
+    ├─ iptables NAT PREROUTING  ← intercepts the packet before routing
+    │       │
+    │       └─ SS_REDIR chain
+    │               ├─ RETURN if dst = SS server (avoid infinite loop)
+    │               ├─ RETURN if dst = private/reserved IP (LAN traffic stays local)
+    │               └─ REDIRECT → 127.0.0.1:12345  (everything else)
+    │
+    ├─ ss-redir  (listening on :12345)
+    │       │  reads original destination via SO_ORIGINAL_DST socket option
+    │       │  encrypts payload with aes-128-gcm
+    │       └─► SS server (192.168.1.14:444)  ──►  google.com:443
+    │
+    └─ DNS path (UDP, handled separately)
+            │
+            dnsmasq  ──► 127.0.0.1:5353
+                              │
+                         ss-tunnel  ──► SS server ──► 8.8.8.8:53
+```
+
+### Component Roles
+
+| Component | What it does |
+|-----------|-------------|
+| **iptables NAT REDIRECT** | Intercepts TCP packets at the kernel level and rewrites their destination to a local port. The application (client) never knows this happened. |
+| **ss-redir** | A transparent TCP proxy built into shadowsocks-libev. Receives redirected connections, recovers the *original* destination with `SO_ORIGINAL_DST`, then forwards the data through an encrypted Shadowsocks tunnel. |
+| **ss-tunnel** | Forwards UDP traffic (DNS queries) through the same Shadowsocks tunnel. Required because `iptables REDIRECT` only works for TCP; DNS is UDP. |
+| **dnsmasq** | OpenWrt's DNS/DHCP server. Configured to send all DNS queries to `ss-tunnel` instead of a plain upstream server, so DNS lookups are also encrypted and not polluted. |
+
+### TCP Traffic — Step by Step
+
+1. A client device sends a `SYN` packet destined for `google.com:443`.
+2. The packet arrives at the router's `br-lan` bridge (LAN + WiFi combined interface).
+3. **iptables PREROUTING** processes the packet before the kernel decides where to route it.
+4. The packet enters the `SS_REDIR` chain:
+   - If the destination is the SS server IP → `RETURN` (skip proxying, send it directly — prevents a routing loop).
+   - If the destination is a private/reserved range (`10.x`, `127.x`, `192.168.x`, etc.) → `RETURN` (LAN traffic never needs proxying).
+   - Otherwise → `REDIRECT --to-ports 12345` (kernel rewrites destination to `127.0.0.1:12345`).
+5. The kernel delivers the packet to `ss-redir` listening on port `12345`.
+6. `ss-redir` calls `getsockopt(SO_ORIGINAL_DST)` on the accepted socket to recover the real destination IP and port that iptables hid.
+7. `ss-redir` wraps the data in a Shadowsocks envelope encrypted with `aes-128-gcm` and opens a TCP connection to the SS server (`192.168.1.14:444`).
+8. The SS server decrypts the envelope and opens a connection to the original destination (`google.com:443`).
+9. Data flows back through the same path, fully encrypted between the router and the SS server.
+
+### DNS Traffic — Step by Step
+
+DNS uses UDP, which `iptables REDIRECT` cannot intercept in the same way, so a separate path is needed:
+
+1. A client device sends a DNS query (UDP, port 53) to the router (`192.168.2.1`).
+2. `dnsmasq` receives the query (it is the DNS server for the LAN).
+3. `dnsmasq` is configured with `server=127.0.0.1#5353`, so it forwards the query to `ss-tunnel` on port `5353`.
+4. `ss-tunnel` wraps the UDP DNS query in a TCP Shadowsocks connection to the SS server, tunneling it to `8.8.8.8:53`.
+5. The SS server forwards the query to Google's DNS, gets the answer, and sends it back through the tunnel.
+6. `ss-tunnel` delivers the answer to `dnsmasq`, which replies to the original client.
+
+This prevents DNS poisoning because queries never travel in plaintext to a potentially monitored upstream resolver.
+
+### Why SO_ORIGINAL_DST Matters
+
+When iptables performs a `REDIRECT`, it changes the packet's destination IP/port to `127.0.0.1:12345`. Without extra information, the receiving process (`ss-redir`) would only see "a connection from the client" with no idea where the client actually wanted to go. Linux saves the original destination in the connection-tracking state. `ss-redir` retrieves it with:
+
+```c
+getsockopt(fd, SOL_IP, SO_ORIGINAL_DST, &addr, &addrlen);
+```
+
+This is the key mechanism that makes transparent proxying work — `ss-redir` can forward traffic to the correct server without the client having configured a proxy at all.
+
+### Why ss-redir Instead of ss-local?
+
+| | `ss-local` | `ss-redir` |
+|-|-----------|-----------|
+| Protocol exposed | SOCKS5 | none (transparent) |
+| Client config needed | Yes (set SOCKS5 proxy) | No |
+| Works for all apps | No (app must support SOCKS5) | Yes |
+| Uses SO_ORIGINAL_DST | No | Yes |
+| Purpose | Per-app proxy | Router-level transparent proxy |
+
+### iptables Rules — Annotated
+
+```sh
+# Create a new chain in the NAT table for our rules
+iptables -t nat -N SS_REDIR
+
+# --- Bypass rules (RETURN = skip this chain, continue normal routing) ---
+
+# Do NOT redirect traffic going to the SS server itself.
+# Without this, ss-redir's own outbound connection would get redirected
+# back into ss-redir → infinite loop → connection refused.
+iptables -t nat -A SS_REDIR -d 192.168.1.14 -j RETURN
+
+# Skip loopback and private/reserved address ranges.
+# These should be delivered locally, not proxied.
+iptables -t nat -A SS_REDIR -d 0.0.0.0/8    -j RETURN   # "this" network
+iptables -t nat -A SS_REDIR -d 10.0.0.0/8   -j RETURN   # RFC1918 private
+iptables -t nat -A SS_REDIR -d 127.0.0.0/8  -j RETURN   # loopback
+iptables -t nat -A SS_REDIR -d 169.254.0.0/16 -j RETURN # link-local
+iptables -t nat -A SS_REDIR -d 172.16.0.0/12  -j RETURN # RFC1918 private
+iptables -t nat -A SS_REDIR -d 192.168.0.0/16 -j RETURN # RFC1918 private
+iptables -t nat -A SS_REDIR -d 224.0.0.0/4    -j RETURN # multicast
+
+# --- Redirect rule ---
+
+# All remaining TCP traffic → redirect to ss-redir on port 12345.
+# The kernel saves the original destination so ss-redir can retrieve it.
+iptables -t nat -A SS_REDIR -p tcp -j REDIRECT --to-ports 12345
+
+# --- Hook the chain into traffic flow ---
+
+# Apply SS_REDIR to every TCP packet arriving on the LAN bridge.
+# br-lan = all wired LAN ports + Wi-Fi clients combined.
+# PREROUTING runs before the routing decision, so we catch
+# traffic destined for external IPs before the kernel routes it.
+iptables -t nat -A PREROUTING -i br-lan -p tcp -j SS_REDIR
+```
+
 ## Device Info
 
 | Item | Value |
