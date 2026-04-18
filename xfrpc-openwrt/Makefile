@@ -33,6 +33,9 @@ CMAKE_OPTIONS += \
 	-DENABLE_SANITIZER=OFF \
 	-DTHIRDPARTY_STATIC_BUILD=OFF
 
+# xfrpc uses -Werror; relax format warnings for musl/MIPS time_t mismatch
+TARGET_CFLAGS += -Wno-error=format=
+
 define Package/xfrpc/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/xfrpc $(1)/usr/bin/
