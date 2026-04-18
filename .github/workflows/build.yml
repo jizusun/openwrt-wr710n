@@ -3,6 +3,7 @@ name: Build OpenWrt for TL-WR710N v1
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 env:
   OPENWRT_VERSION: "19.07.10"
@@ -12,25 +13,13 @@ env:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: full
-            desc: "iptables + shadowsocks + IPv6"
-            packages: >-
-              shadowsocks-libev-ss-redir shadowsocks-libev-ss-tunnel
-              iptables-mod-nat-extra ip-full ipset
-              -ppp -ppp-mod-pppoe -kmod-pppoe -kmod-pppox
-
-    name: "${{ matrix.name }} - ${{ matrix.desc }}"
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Python 2
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python2
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python2
           sudo ln -sf /usr/bin/python2 /usr/bin/python
 
       - name: Download ImageBuilder
@@ -41,19 +30,44 @@ jobs:
 
       - name: Download chnroute
         run: |
+          mkdir -p files/etc/shadowsocks-libev
           curl -sL https://raw.githubusercontent.com/17mon/china_ip_list/master/china_ip_list.txt \
             -o files/etc/shadowsocks-libev/chnroute.txt
-          wc -l files/etc/shadowsocks-libev/chnroute.txt
+          echo "chnroute entries: $(wc -l < files/etc/shadowsocks-libev/chnroute.txt)"
+
+      - name: Download xfrpc ipk (optional)
+        continue-on-error: true
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: build-xfrpc.yml
+          name: xfrpc-mips_24kc
+          path: custom-ipks/
+
+      - name: Install custom ipks
+        run: |
+          if ls custom-ipks/*.ipk 1>/dev/null 2>&1; then
+            cp custom-ipks/*.ipk imagebuilder/packages/
+            echo "Custom ipks added: $(ls custom-ipks/*.ipk)"
+          else
+            echo "No custom ipks found, skipping"
+          fi
 
       - name: Build firmware
         run: |
           cd imagebuilder
+          EXTRA_PKGS=""
+          if ls packages/xfrpc_*.ipk 1>/dev/null 2>&1; then
+            EXTRA_PKGS="xfrpc"
+          fi
           make image PROFILE="${{ env.PROFILE }}" \
-            PACKAGES="${{ matrix.packages }}" \
+            PACKAGES="shadowsocks-libev-ss-redir shadowsocks-libev-ss-tunnel \
+              iptables-mod-nat-extra ip-full ipset https-dns-proxy \
+              curl ca-bundle libcurl4 $EXTRA_PKGS \
+              -ppp -ppp-mod-pppoe -kmod-pppoe -kmod-pppox" \
             FILES="../files"
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-wr710n-v1-${{ matrix.name }}
+          name: openwrt-wr710n-v1-transparent-proxy
           path: imagebuilder/bin/targets/ath79/generic/*sysupgrade*

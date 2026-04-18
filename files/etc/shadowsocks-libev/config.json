@@ -1,9 +1,7 @@
 {
-    "server": "YOUR_SERVER",
-    "server_port": 444,
-    "local_address": "0.0.0.0",
-    "local_port": 1080,
+    "server": "YOUR_SERVER_IP",
+    "server_port": 8388,
     "password": "YOUR_PASSWORD",
-    "method": "aes-128-gcm",
-    "mode": "tcp_only"
+    "method": "chacha20-ietf-poly1305",
+    "timeout": 300
 }

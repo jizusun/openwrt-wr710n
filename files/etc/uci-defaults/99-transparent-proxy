@@ -1,0 +1,13 @@
+#!/bin/sh
+# First boot setup: enable services and disable IPv6 on LAN
+
+# Enable https-dns-proxy
+/etc/init.d/https-dns-proxy enable
+
+# Disable IPv6 on br-lan
+echo 1 > /proc/sys/net/ipv6/conf/br-lan/disable_ipv6
+
+# Make rc.local executable
+chmod +x /etc/rc.local
+
+exit 0
