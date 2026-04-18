@@ -35,13 +35,34 @@ jobs:
             -o files/etc/shadowsocks-libev/chnroute.txt
           echo "chnroute entries: $(wc -l < files/etc/shadowsocks-libev/chnroute.txt)"
 
+      - name: Download xfrpc ipk (optional)
+        continue-on-error: true
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: build-xfrpc.yml
+          name: xfrpc-mips_24kc
+          path: custom-ipks/
+
+      - name: Install custom ipks
+        run: |
+          if ls custom-ipks/*.ipk 1>/dev/null 2>&1; then
+            cp custom-ipks/*.ipk imagebuilder/packages/
+            echo "Custom ipks added: $(ls custom-ipks/*.ipk)"
+          else
+            echo "No custom ipks found, skipping"
+          fi
+
       - name: Build firmware
         run: |
           cd imagebuilder
+          EXTRA_PKGS=""
+          if ls packages/xfrpc_*.ipk 1>/dev/null 2>&1; then
+            EXTRA_PKGS="xfrpc"
+          fi
           make image PROFILE="${{ env.PROFILE }}" \
             PACKAGES="shadowsocks-libev-ss-redir shadowsocks-libev-ss-tunnel \
               iptables-mod-nat-extra ip-full ipset https-dns-proxy \
-              curl ca-bundle libcurl4 \
+              curl ca-bundle libcurl4 $EXTRA_PKGS \
               -ppp -ppp-mod-pppoe -kmod-pppoe -kmod-pppox" \
             FILES="../files"
 

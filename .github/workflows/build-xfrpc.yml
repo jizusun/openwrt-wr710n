@@ -1,0 +1,49 @@
+name: Build xfrpc for TL-WR710N
+
+on:
+  workflow_dispatch:
+
+env:
+  SDK_URL: "https://downloads.openwrt.org/releases/19.07.10/targets/ath79/generic/openwrt-sdk-19.07.10-ath79-generic_gcc-7.5.0_musl.Linux-x86_64.tar.xz"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential ccache ecj fastjar file g++ gawk \
+            gettext git java-propose-classpath libelf-dev libncurses5-dev \
+            libncursesw5-dev libssl-dev python2 python3 unzip wget \
+            rsync subversion swig time xsltproc zlib1g-dev
+          sudo ln -sf /usr/bin/python2 /usr/bin/python
+
+      - name: Download and extract SDK
+        run: |
+          wget -q ${{ env.SDK_URL }}
+          tar xf openwrt-sdk-*.tar.xz
+          mv openwrt-sdk-*-ath79-generic_gcc-7.5.0_musl.Linux-x86_64 sdk
+
+      - name: Prepare xfrpc package
+        run: |
+          mkdir -p sdk/package/xfrpc
+          cp xfrpc-openwrt/Makefile sdk/package/xfrpc/
+
+      - name: Build xfrpc
+        run: |
+          cd sdk
+          # Update feeds for dependencies
+          ./scripts/feeds update -a
+          ./scripts/feeds install libevent2 libjson-c zlib libopenssl
+          # Enable xfrpc package
+          make defconfig
+          make package/xfrpc/compile V=s -j$(nproc)
+
+      - name: Upload ipk
+        uses: actions/upload-artifact@v4
+        with:
+          name: xfrpc-mips_24kc
+          path: sdk/bin/packages/mips_24kc/base/xfrpc_*.ipk

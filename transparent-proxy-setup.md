@@ -5,29 +5,31 @@
 OpenWrt 19.07.10 on TP-Link WR710N acting as a transparent TCP proxy with:
 - China/foreign split routing (China IPs go direct, foreign IPs go through SS)
 - Encrypted DNS via DoH (no DNS pollution)
+- IPv6 disabled (forces all traffic through IPv4 proxy)
 
 ```
 Phone/Laptop → WiFi (OpenWrt-WR710N)
   ├─ China IP traffic → direct (bypassed via chnroute ipset)
   ├─ Foreign IP traffic → ss-redir → SS Server → Internet
-  └─ DNS → dnsmasq → https-dns-proxy (DoH) → Alibaba DNS (encrypted, clean)
+  └─ DNS → dnsmasq → https-dns-proxy (DoH) → Cloudflare DNS (encrypted, clean)
 ```
 
 ## Hardware
 
-- Model: TP-Link WR710N (ar71xx/generic, MIPS 24Kc 400MHz)
-- RAM: 64MB
-- Flash: 8MB (overlay ~4MB)
+- Model: TP-Link WR710N v1 (ar71xx/generic, MIPS 24Kc 400MHz)
+- SoC: Atheros AR9330 rev 1
+- RAM: 58 MB (64MB minus kernel)
+- Flash: 8MB (overlay ~4MB, ~2.2MB free)
 - LAN: 192.168.2.1/24 (br-lan)
-- WAN: DHCP (eth1)
-- WiFi SSID: `OpenWrt-WR710N`
+- WAN: DHCP (eth0)
+- WiFi: `OpenWrt-WR710N`, 2.4GHz 802.11bgn, WPA2 PSK
 
 ## Components
 
 | Component | Role | Port |
 |-----------|------|------|
 | ss-redir | Transparent TCP proxy | 12345 |
-| https-dns-proxy | DNS-over-HTTPS client | 5053 (UDP) |
+| https-dns-proxy | DNS-over-HTTPS client (HTTP/1.1 mode) | 5053 (UDP) |
 | dnsmasq | LAN DNS + DHCP | 53 |
 | ipset (chnroute) | China IP bypass list (~7500 CIDRs) | — |
 | iptables | Traffic hijack (REDIRECT) + split routing | — |
@@ -108,6 +110,16 @@ iptables -I FORWARD -i br-lan -p tcp --dport 853 -j REJECT
 ip6tables -I FORWARD -i br-lan -j DROP
 ```
 
+### `/etc/sysctl.conf`
+
+```
+# Defaults are configured in /etc/sysctl.d/* and can be customized in this file
+net.ipv6.conf.all.disable_ipv6=1
+```
+
+IPv6 must be disabled on the router. Without this, curl/wget may connect to AAAA records
+which bypass the IPv4-only ss-redir proxy, causing TLS handshake failures on foreign sites.
+
 ### `/etc/shadowsocks-libev/chnroute.txt`
 
 China IP CIDR list (~7500 entries). Source: https://github.com/17mon/china_ip_list
@@ -121,11 +133,15 @@ curl -sL https://raw.githubusercontent.com/17mon/china_ip_list/master/china_ip_l
 ### UCI: https-dns-proxy
 
 ```
-https-dns-proxy.@https-dns-proxy[0].resolver_url='https://dns.alidns.com/dns-query'
-https-dns-proxy.@https-dns-proxy[0].bootstrap_dns='223.5.5.5'
+https-dns-proxy.@https-dns-proxy[0].resolver_url='https://cloudflare-dns.com/dns-query'
+https-dns-proxy.@https-dns-proxy[0].bootstrap_dns='1.1.1.1'
 https-dns-proxy.@https-dns-proxy[0].listen_addr='127.0.0.1'
 https-dns-proxy.@https-dns-proxy[0].listen_port='5053'
+https-dns-proxy.@https-dns-proxy[0].use_http1='1'
 ```
+
+`use_http1='1'` is required — the router's libcurl lacks HTTP/2 support. Without it,
+https-dns-proxy fails with `CURLOPT_HTTP_VERSION error` and DNS stops working.
 
 ### UCI: dnsmasq
 
@@ -157,30 +173,56 @@ Router's own TCP traffic is also split-routed via the OUTPUT chain.
 1. LAN device sends DNS query to 192.168.2.1:53
 2. iptables DNS hijack ensures all port 53 traffic goes to dnsmasq
 3. dnsmasq forwards to 127.0.0.1#5053 (https-dns-proxy)
-4. https-dns-proxy makes HTTPS request to `dns.alidns.com`
-5. This HTTPS connection (TCP 443) is a China IP → goes direct (fast!)
+4. https-dns-proxy makes HTTPS request to `cloudflare-dns.com`
+5. This HTTPS connection (TCP 443) goes through ss-redir → SS server (foreign IP)
 6. Response comes back with clean, unpoisoned IP
 
-### Why DoH via Alibaba?
+### IPv6 Disabled
 
-- Plain DNS (UDP 53) gets poisoned by GFW for blocked domains (e.g., twitter.com)
-- DoH encrypts DNS inside HTTPS — GFW can't see or tamper with queries
-- Alibaba DoH is a China IP so it goes direct (no proxy needed), yet returns correct unpoisoned results
-- Foreign DoH providers (Cloudflare, Google, Quad9) are blocked from China-based servers
-- 360 DoH (`doh.360.cn`) actively censors (returns 127.0.0.1 for twitter.com) — do NOT use
+IPv6 is disabled at the kernel level (`net.ipv6.conf.all.disable_ipv6=1`) and at the
+firewall level (`ip6tables -I FORWARD -i br-lan -j DROP`). This is necessary because:
+- ss-redir only intercepts IPv4 TCP via iptables
+- If IPv6 is enabled, applications may prefer AAAA records and connect via IPv6
+- IPv6 traffic bypasses the proxy entirely, causing connections to foreign sites to fail
 
-## DNS Provider Comparison (from China)
+## DoH Provider Choice
+
+### With a China-based SS server
+
+Use Alibaba DoH — it's a China IP so it goes direct (fast, no proxy needed):
+```sh
+uci set https-dns-proxy.@https-dns-proxy[0].resolver_url='https://dns.alidns.com/dns-query'
+uci set https-dns-proxy.@https-dns-proxy[0].bootstrap_dns='223.5.5.5'
+uci commit https-dns-proxy
+/etc/init.d/https-dns-proxy restart
+```
+
+### With a foreign SS server (current setup)
+
+Use Cloudflare DoH — goes through the proxy, returns Cloudflare CDN IPs for better routing:
+```sh
+uci set https-dns-proxy.@https-dns-proxy[0].resolver_url='https://cloudflare-dns.com/dns-query'
+uci set https-dns-proxy.@https-dns-proxy[0].bootstrap_dns='1.1.1.1'
+uci commit https-dns-proxy
+/etc/init.d/https-dns-proxy restart
+```
+
+### Providers to avoid
+
+- **Plain DNS** (114.114.114.114, 223.5.5.5 over UDP) — poisoned by GFW for blocked domains
+- **360 DoH** (`doh.360.cn`) — actively censors (returns 127.0.0.1 for blocked domains)
+- **Quad9 DoH** (`dns.quad9.net`) — unreachable through some SS proxy exits
+
+### DNS Provider Comparison (from China)
 
 | Provider | Protocol | twitter.com result | Trustworthy? |
 |----------|----------|-------------------|---|
 | 114.114.114.114 | Plain UDP | ❌ poisoned | No for blocked domains |
 | 223.5.5.5 (Alibaba) | Plain UDP | ❌ poisoned | No for blocked domains |
-| dns.alidns.com | DoH (HTTPS) | ✅ `104.244.42.197` | Yes |
-| doh.pub (Tencent) | DoH (HTTPS) | ✅ `162.159.140.229` | Yes |
+| dns.alidns.com | DoH (HTTPS) | ✅ correct | Yes |
+| doh.pub (Tencent) | DoH (HTTPS) | ✅ correct | Yes |
+| cloudflare-dns.com | DoH (HTTPS) | ✅ correct | Yes (needs proxy from China) |
 | doh.360.cn | DoH (HTTPS) | ❌ `127.0.0.1` | No — censors |
-| 1.1.1.1 (Cloudflare) | DoH | ❌ blocked from China | N/A |
-| dns.google | DoH | ❌ blocked from China | N/A |
-| dns.quad9.net | DoH | ❌ blocked from China | N/A |
 
 ## Post-Flash Setup
 
@@ -210,17 +252,6 @@ sh /etc/rc.local
 /etc/init.d/firewall restart
 ```
 
-### When switching to a foreign SS server
-
-Foreign DoH providers become reachable. Optionally switch to Quad9 for better privacy:
-
-```sh
-uci set https-dns-proxy.@https-dns-proxy[0].resolver_url='https://dns.quad9.net/dns-query'
-uci set https-dns-proxy.@https-dns-proxy[0].bootstrap_dns='9.9.9.9'
-uci commit https-dns-proxy
-/etc/init.d/https-dns-proxy restart
-```
-
 ## Updating chnroute
 
 The China IP list changes over time. Update periodically:
@@ -232,14 +263,28 @@ curl -sL https://raw.githubusercontent.com/17mon/china_ip_list/master/china_ip_l
 ssh wr710n '/etc/init.d/firewall restart'
 ```
 
+## Performance
+
+Tested throughput (foreign download through SS proxy):
+
+| Test | Speed |
+|------|-------|
+| Cloudflare 1MB | ~5.0 Mbps |
+| Cloudflare 5MB | ~7.9 Mbps |
+| Cloudflare 10MB | ~8.9 Mbps |
+| Cloudflare 20MB | ~8.9 Mbps |
+
+Sustained throughput is ~**8.9 Mbps**, bottlenecked by the MIPS CPU doing chacha20 encryption.
+
 ## Limitations
 
 - **TCP only** — UDP traffic (QUIC, gaming, VoIP) is not proxied
-- **~5-15 Mbps throughput** — limited by MIPS CPU doing chacha20 encryption
+- **~9 Mbps throughput** — limited by MIPS CPU doing chacha20 encryption
 - **No hardware crypto** — chacha20-ietf-poly1305 is the fastest option for this CPU
-- **8MB flash** — very limited space for additional packages
-- **OpenWrt 19.07 EOL** — no security updates
+- **8MB flash** — very limited space for additional packages (~2.2MB free)
+- **OpenWrt 19.07 EOL** — no security updates, dnsmasq 2.80 (no filter-AAAA support)
 - **ipset loading takes ~10s on boot** — 7500 entries on slow CPU
+- **No IPv6** — disabled to prevent proxy bypass; IPv6-only sites won't work
 
 ## Troubleshooting
 
@@ -247,20 +292,32 @@ ssh wr710n '/etc/init.d/firewall restart'
 # Check processes
 ps | grep -E "ss-redir|https-dns" | grep -v grep
 
-# Test DNS (should resolve)
-ping -c1 google.com
+# Verify https-dns-proxy has -x flag (ps truncates, use /proc)
+cat /proc/$(pidof https-dns-proxy)/cmdline | tr '\0' ' '
 
-# Test proxy (foreign IP → should show SS server IP)
-wget -qO- http://ipinfo.io/ip
+# Test DNS (should resolve)
+nslookup google.com
+
+# Test proxy (foreign IP → should show SS exit IP)
+curl -s ipinfo.io
 
 # Test China bypass (should be fast, direct)
-wget -qO- --timeout=3 http://www.baidu.com > /dev/null && echo "baidu OK"
+curl -s --connect-timeout 3 http://www.baidu.com > /dev/null && echo "baidu OK"
+
+# Test foreign HTTPS
+curl -4 -s --connect-timeout 10 https://v2ex.com > /dev/null && echo "v2ex OK"
 
 # Check ipset loaded
 ipset list chnroute | head -5
 
 # Check iptables counters
 iptables -t nat -L SS_REDIR -n -v
+
+# Check IPv6 is disabled
+cat /proc/sys/net/ipv6/conf/all/disable_ipv6  # should be 1
+
+# Check ss-redir logs for errors
+logread | grep ss-redir | tail -10
 
 # Restart everything
 killall ss-redir
