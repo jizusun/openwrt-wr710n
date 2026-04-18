@@ -1,6 +1,10 @@
 name: Build xfrpc for TL-WR710N
 
 on:
+  pull_request:
+    paths:
+      - 'xfrpc-openwrt/**'
+      - '.github/workflows/build-xfrpc.yml'
   workflow_dispatch:
 
 env:
